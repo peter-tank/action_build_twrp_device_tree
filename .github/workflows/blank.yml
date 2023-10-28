@@ -3,38 +3,72 @@ name: Make TWRP Device
 on:
   workflow_dispatch:
     inputs:
+      ART_ID:
+        description: 'Artifacts id from self owned repo magisk_boot_patch'
+        required: true
+        default: 930831411
       IMG_URL:    
         description: 'IMG_URL'
         required: true
-        default: ''
+        default: 'https://api.github.com/repos/peter-tank/magisk_boot_patch/actions/artifacts/930831411/zip'
 
 jobs:
   build:
     if: github.event.repository.owner.id == github.event.sender.id
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-latest
     
     steps:
     - name: Check Out
       uses: actions/checkout@main
       
+    - name: Set up Python 3.8
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+
     - name: Prepare the environment
       run: |
         sudo apt update
-        sudo apt -y install python python3 python-pip python3-pip cpio wget
+        sudo apt -y install cpio wget
         pip3 install twrpdtgen
         mkdir dt
       
     - name: Download boot or recovery img
+      env:
+        PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        USERNAME: peter-tank
+        REPO: magisk_boot_patch
+        ARTIFACT_ID: ${{ github.event.inputs.ART_ID}}
       run: |
-        aria2c "${{ github.event.inputs.IMG_URL }}"
+        aria2c "${{ github.event.inputs.IMG_URL }}" || curl -L -u "${USERNAME}:${PERSONAL_ACCESS_TOKEN}" -o imgs.zip "https://api.github.com/repos/${USERNAME}/${REPO}/actions/artifacts/${ARTIFACT_ID}/zip"
+        unzip -q -o imgs.zip -d ./
+        mv firmware-update/*.img ./
+        # boot.img recovery.img vendor_boot.img vbmeta.img
+        rm -rf imgs.zip
         ls
       
     - name: Start build
       run: |
-        python3 -m twrpdtgen -o dt/ *.img
+        python3 -m twrpdtgen -o device/ recovery.img
     - name: ZIP device tree
       run: |
-        zip -r DeviceTree.zip ./dt
+        zip -r DeviceTree.zip ./device
+
+    - name: Download Android Image Kitchen
+      run: |
+        curl --silent --show-error --location --fail --retry 3 --output AIK-Linux-v3.8-ALL.tar.gz "https://forum.xda-developers.com/attachments/aik-linux-v3-8-all-tar-gz.5300923/"
+        tar -xzf  AIK-Linux-v3.8-ALL.tar.gz
+
+    - name: Setup upterm session
+      uses: lhotari/action-upterm@v1
+      with:
+        ## limits ssh access and adds the ssh public key for the user which triggered the workflow
+        limit-access-to-actor: true
+        ## limits ssh access and adds the ssh public keys of the listed GitHub users
+        limit-access-to-users: peter-tank
+        ## If no one connects after 10 minutes, shut down server.
+        wait-timeout-minutes: 10
+
     - name: Upload to Release
       uses: softprops/action-gh-release@v1
       with:
